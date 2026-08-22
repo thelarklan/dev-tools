@@ -165,15 +165,17 @@ more than one historical merged pull request. Before changing branches or
 deleting anything, `pr-cleanup` verifies that the selected upstream pull
 request is `MERGED`, its head matches both the local fork repository and current
 branch, its base is the upstream default branch, and its merge commit is present
-on that branch. It also refuses tracked worktree or index changes.
+on that branch. It also refuses tracked worktree or index changes, a missing
+remote feature branch, or a local feature tip that does not exactly match its
+published fork branch.
 
 After those checks, the command fast-forwards the local default branch from
-upstream, pushes that branch normally to the fork, deletes the remote feature
-branch if it still exists, and deletes the local feature branch. It first tries
-Git's safe branch deletion; squash-merged branches require a forced local
-deletion because their original commits are not ancestors of the squash
-commit. That fallback occurs only after the exact merged pull request and
-upstream merge commit have been verified.
+upstream, pushes that branch normally to the fork, lease-protects deletion of
+the verified remote feature tip, and deletes the local feature branch. It first
+tries Git's safe branch deletion; squash-merged branches require a forced local
+deletion because their original commits are not ancestors of the squash commit.
+That fallback occurs only after the exact merged pull request, upstream merge
+commit, and identical local and published feature tips have been verified.
 
 ## Uninstall
 

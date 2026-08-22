@@ -117,6 +117,12 @@ export FAKE_GH_LOG="$fake_gh_log"
 export MERGE_COMMIT="$merge_commit"
 export PATH="$fake_bin:$PATH"
 
+assert_no_cleanup_mutation() {
+    if grep -Eq 'fetch upstream|switch |merge --ff-only|push |branch -[dD]' "$fake_git_log"; then
+        fail "failed publication verification mutated branches or fork state"
+    fi
+}
+
 if (
     cd "$clone_dir"
     pr-cleanup 17 extra 2>"$test_dir/usage-error"
@@ -223,9 +229,41 @@ if (
 fi
 unset FAKE_GH_MERGE
 grep -Fq 'merge commit is not present on upstream/main' "$test_dir/unpublished-merge-error" || fail "missing upstream merge error was unclear"
-if grep -Eq 'push origin (--delete|HEAD:main)|branch -[dD]' "$fake_git_log"; then
+if grep -Eq 'push |branch -[dD]' "$fake_git_log"; then
     fail "failed merge verification mutated fork or local branches"
 fi
+
+printf 'local only\n' >"$clone_dir/local-only.txt"
+$real_git -C "$clone_dir" add local-only.txt
+$real_git -C "$clone_dir" commit -m 'local work after merge' >/dev/null
+local_only_commit=$($real_git -C "$clone_dir" rev-parse HEAD)
+: >"$fake_git_log"
+if (
+    cd "$clone_dir"
+    pr-cleanup 17 2>"$test_dir/unpublished-local-error"
+); then
+    fail "pr-cleanup deleted a branch with an unpushed local commit"
+fi
+grep -Fq 'local feature/cleanup does not match origin/feature/cleanup' "$test_dir/unpublished-local-error" || fail "unpublished local commit error was unclear"
+assert_no_cleanup_mutation
+[[ "$($real_git -C "$clone_dir" branch --show-current)" == feature/cleanup ]] || fail "unpublished local commit changed branches"
+[[ "$($real_git -C "$clone_dir" rev-parse feature/cleanup)" == "$local_only_commit" ]] || fail "unpublished local commit was lost"
+[[ "$($real_git --git-dir="$fork_repo" rev-parse feature/cleanup)" == "$feature_commit" ]] || fail "unpublished local commit check changed the remote branch"
+$real_git -C "$clone_dir" reset --hard "$feature_commit" >/dev/null
+
+$real_git --git-dir="$fork_repo" update-ref -d refs/heads/feature/cleanup
+: >"$fake_git_log"
+if (
+    cd "$clone_dir"
+    pr-cleanup 17 2>"$test_dir/missing-remote-error"
+); then
+    fail "pr-cleanup force-deleted a local branch without a remote publication ref"
+fi
+grep -Fq 'remote feature branch origin/feature/cleanup is missing' "$test_dir/missing-remote-error" || fail "missing remote feature branch error was unclear"
+assert_no_cleanup_mutation
+[[ "$($real_git -C "$clone_dir" branch --show-current)" == feature/cleanup ]] || fail "missing remote feature branch changed branches"
+[[ "$($real_git -C "$clone_dir" rev-parse feature/cleanup)" == "$feature_commit" ]] || fail "missing remote feature branch check changed the local branch"
+$real_git --git-dir="$fork_repo" update-ref refs/heads/feature/cleanup "$feature_commit"
 
 : >"$fake_git_log"
 : >"$fake_gh_log"
@@ -239,7 +277,7 @@ grep -Fq 'pr view 17 --repo github.com/upstream/project' "$fake_gh_log" || fail 
 grep -Fq 'fetch upstream main' "$fake_git_log" || fail "cleanup did not fetch upstream main"
 grep -Fq 'merge-base --is-ancestor' "$fake_git_log" || fail "cleanup did not verify the merge commit on upstream"
 grep -Fq 'push origin HEAD:main' "$fake_git_log" || fail "cleanup did not synchronize the fork default branch"
-grep -Fq 'push origin --delete feature/cleanup' "$fake_git_log" || fail "cleanup did not delete the remote feature branch"
+grep -Fq "push --force-with-lease=refs/heads/feature/cleanup:$feature_commit origin --delete feature/cleanup" "$fake_git_log" || fail "cleanup did not lease-protect remote feature deletion"
 grep -Fq 'branch -d feature/cleanup' "$fake_git_log" || fail "cleanup did not try safe local branch deletion first"
 grep -Fq 'branch -D feature/cleanup' "$fake_git_log" || fail "cleanup did not handle the squash-merged local branch"
 

@@ -442,6 +442,7 @@ pr-cleanup() {
 
     local requested_pr="${1:-}" repository origin_repository origin_path owner branch base pr_number details
     local actual_number state head_branch head_owner head_repository base_branch merge_commit
+    local remote_ref remote_status remote_tip remote_ref_name local_tip
     repository=$(_dev_git_upstream_repo) || return 1
     origin_repository=$(_dev_git_origin_repo) || return 1
     origin_path="${origin_repository#*/}"
@@ -491,6 +492,32 @@ pr-cleanup() {
         return 1
     fi
 
+    if remote_ref=$(git ls-remote --exit-code --heads origin "$branch"); then
+        :
+    else
+        remote_status=$?
+        if [[ "$remote_status" -eq 2 ]]; then
+            _dev_git_error "remote feature branch origin/$branch is missing; refusing cleanup because publication cannot be verified"
+        else
+            _dev_git_error "could not read remote feature branch origin/$branch; refusing cleanup"
+        fi
+        return 1
+    fi
+    if [[ -z "$remote_ref" || "$remote_ref" == *$'\n'* ]]; then
+        _dev_git_error "could not identify one remote feature branch origin/$branch; refusing cleanup"
+        return 1
+    fi
+    IFS=$'\t' read -r remote_tip remote_ref_name <<<"$remote_ref"
+    if [[ -z "$remote_tip" || "$remote_ref_name" != "refs/heads/$branch" ]]; then
+        _dev_git_error "could not identify remote feature branch origin/$branch; refusing cleanup"
+        return 1
+    fi
+    local_tip=$(git rev-parse "$branch") || return 1
+    if [[ "$local_tip" != "$remote_tip" ]]; then
+        _dev_git_error "local $branch does not match origin/$branch; push, synchronize, or inspect it before cleanup"
+        return 1
+    fi
+
     git fetch upstream "$base" || return 1
     if ! git merge-base --is-ancestor "$merge_commit" "upstream/$base"; then
         _dev_git_error "pull request #$actual_number merge commit is not present on upstream/$base; refusing cleanup"
@@ -499,9 +526,7 @@ pr-cleanup() {
     git switch "$base" || return 1
     git merge --ff-only "upstream/$base" || return 1
     git push origin "HEAD:$base" || return 1
-    if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-        git push origin --delete "$branch" || return 1
-    fi
+    git push --force-with-lease="refs/heads/$branch:$remote_tip" origin --delete "$branch" || return 1
     git branch -d "$branch" 2>/dev/null || git branch -D "$branch" || return 1
     printf 'Cleaned up merged pull request #%s and synchronized %s.\n' "$actual_number" "$base"
 }
