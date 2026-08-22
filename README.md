@@ -12,7 +12,9 @@ request against the canonical upstream, and comments on that pull request.
 Pull requests are intended to remain small enough for hands-on verification.
 Before merging, record the exact manual steps, expected and observed results,
 cleanup instructions, known limitations, and behavior deliberately deferred to
-a later change. Merging remains a deliberate maintainer action in GitHub.
+a later change. Merging remains a deliberate maintainer action in GitHub. Use
+the [human verification checklist](docs/human-verification.md) as a reusable
+review record.
 
 ## Requirements
 
