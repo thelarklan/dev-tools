@@ -7,6 +7,13 @@ surface installs the helpers, creates and synchronizes a fork checkout, commits
 feature work, performs guarded amend and rebase operations, opens a draft pull
 request against the canonical upstream, and comments on that pull request.
 
+## Human verification
+
+Pull requests are intended to remain small enough for hands-on verification.
+Before merging, record the exact manual steps, expected and observed results,
+cleanup instructions, known limitations, and behavior deliberately deferred to
+a later change. Merging remains a deliberate maintainer action in GitHub.
+
 ## Requirements
 
 - Bash
