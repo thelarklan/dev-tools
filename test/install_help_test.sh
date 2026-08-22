@@ -34,9 +34,10 @@ grep -q 'pr-amend \[--all\]' <<<"$help_output" || fail "pr-amend is missing from
 grep -q 'pr-rebase \[BASE\]' <<<"$help_output" || fail "pr-rebase is missing from help"
 grep -q 'pr-create \[BASE\]' <<<"$help_output" || fail "pr-create is missing from help"
 grep -q 'pr-comment MESSAGE' <<<"$help_output" || fail "pr-comment is missing from help"
+grep -q 'pr-cleanup \[PR\]' <<<"$help_output" || fail "pr-cleanup is missing from help"
 grep -q '^  pr-help$' <<<"$help_output" || fail "pr-help is missing from help"
 if grep -q 'pr-merge' <<<"$help_output"; then
-    fail "help advertises a command not included in this slice"
+    fail "help advertises an automated merge command"
 fi
 
 printf 'export OTHER_EXTENSION=kept\n' >"$home_with_extension/.bashrc.d/other.sh"

@@ -148,6 +148,16 @@ _dev_git_origin_owner() {
     printf '%s\n' "${path%%/*}"
 }
 
+_dev_git_origin_repo() {
+    local remote parsed
+    remote=$(git remote get-url origin) || return 1
+    parsed=$(_dev_git_parse_remote "$remote") || {
+        _dev_git_error "could not determine the origin repository"
+        return 1
+    }
+    printf '%s\n' "$parsed"
+}
+
 _dev_git_require_branch_other_than() {
     local base="$1" branch
     branch=$(_dev_git_current_branch) || return 1
@@ -230,6 +240,9 @@ dev-tools commands:
 
   pr-comment MESSAGE
       Comment on the current fork branch's single open upstream pull request.
+
+  pr-cleanup [PR]
+      Verify a merged pull request, synchronize, and delete its feature branch.
 
   pr-help
       Show this command reference.
@@ -416,4 +429,79 @@ pr-comment() {
         return 1
     fi
     gh pr comment "$pr_number" --repo "$repository" --body "$1"
+}
+
+pr-cleanup() {
+    if [[ $# -gt 1 ]]; then
+        printf 'usage: pr-cleanup [PR]\n' >&2
+        return 2
+    fi
+    _dev_git_require_topology || return 1
+    _dev_git_require_clean || return 1
+    _dev_git_require_gh || return 1
+
+    local requested_pr="${1:-}" repository origin_repository origin_path owner branch base pr_number details
+    local actual_number state head_branch head_owner head_repository base_branch merge_commit
+    repository=$(_dev_git_upstream_repo) || return 1
+    origin_repository=$(_dev_git_origin_repo) || return 1
+    origin_path="${origin_repository#*/}"
+    owner="${origin_path%%/*}"
+    branch=$(_dev_git_current_branch) || return 1
+    base=$(_dev_git_default_branch) || return 1
+    _dev_git_require_branch_other_than "$base" || return 1
+
+    if [[ -n "$requested_pr" ]]; then
+        pr_number="$requested_pr"
+    else
+        pr_number=$(gh pr list --repo "$repository" --head "$branch" --state merged \
+            --limit 100 --json number,headRepositoryOwner \
+            --jq ".[] | select(((.headRepositoryOwner.login // \"\") | ascii_downcase) == (\"$owner\" | ascii_downcase)) | .number") || return 1
+        if [[ -z "$pr_number" ]]; then
+            _dev_git_error "no merged pull request found for $owner:$branch in $repository"
+            return 1
+        fi
+        if [[ "$pr_number" == *$'\n'* ]]; then
+            _dev_git_error "multiple merged pull requests found for $owner:$branch in $repository; pass the PR number"
+            return 1
+        fi
+    fi
+
+    details=$(gh pr view "$pr_number" --repo "$repository" \
+        --json number,state,headRefName,headRepositoryOwner,headRepository,baseRefName,mergeCommit \
+        --jq '[.number, .state, .headRefName, (.headRepositoryOwner.login // ""), ((.headRepositoryOwner.login // "") + "/" + (.headRepository.name // "")), .baseRefName, (.mergeCommit.oid // "")] | @tsv') || return 1
+    if [[ -z "$details" || "$details" == *$'\n'* ]]; then
+        _dev_git_error "could not read one pull request for cleanup"
+        return 1
+    fi
+    IFS=$'\t' read -r actual_number state head_branch head_owner head_repository base_branch merge_commit <<<"$details"
+    if [[ -z "$actual_number" || "$state" != "MERGED" ]]; then
+        _dev_git_error "pull request is ${state:-unknown}, not MERGED; refusing cleanup"
+        return 1
+    fi
+    if [[ "$head_branch" != "$branch" || "${head_owner,,}" != "${owner,,}" || "${head_repository,,}" != "${origin_path,,}" ]]; then
+        _dev_git_error "pull request #$actual_number is for $head_repository:$head_branch, not $origin_path:$branch; refusing cleanup"
+        return 1
+    fi
+    if [[ "$base_branch" != "$base" ]]; then
+        _dev_git_error "pull request #$actual_number targets $base_branch, not the upstream default branch $base; refusing cleanup"
+        return 1
+    fi
+    if [[ -z "$merge_commit" ]]; then
+        _dev_git_error "pull request #$actual_number has no merge commit; refusing cleanup"
+        return 1
+    fi
+
+    git fetch upstream "$base" || return 1
+    if ! git merge-base --is-ancestor "$merge_commit" "upstream/$base"; then
+        _dev_git_error "pull request #$actual_number merge commit is not present on upstream/$base; refusing cleanup"
+        return 1
+    fi
+    git switch "$base" || return 1
+    git merge --ff-only "upstream/$base" || return 1
+    git push origin "HEAD:$base" || return 1
+    if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+        git push origin --delete "$branch" || return 1
+    fi
+    git branch -d "$branch" 2>/dev/null || git branch -D "$branch" || return 1
+    printf 'Cleaned up merged pull request #%s and synchronized %s.\n' "$actual_number" "$base"
 }

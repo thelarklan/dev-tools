@@ -12,7 +12,8 @@ request against the canonical upstream, and comments on that pull request.
 - Bash
 - Git
 - [GitHub CLI](https://cli.github.com/) authenticated to the target host for
-  commands that use the GitHub API (`fork-clone`, `pr-create`, and `pr-comment`)
+  commands that use the GitHub API (`fork-clone`, `pr-create`, `pr-comment`,
+  and `pr-cleanup`)
 - Standard Linux command-line tools (`awk`, `find`, `grep`, and `install`)
 
 ## Install
@@ -148,6 +149,32 @@ default branch, derives both repository identities locally from the configured
 remotes, and fails instead of guessing when no matching PR or multiple matching
 PRs are open.
 
+## Clean up after a merge
+
+Merging remains a deliberate maintainer action in GitHub after review and
+hands-on verification. Dev-tools intentionally does not provide a `pr-merge`
+command. After GitHub reports the pull request merged, stay on its feature
+branch and run:
+
+```bash
+pr-cleanup
+```
+
+Pass a pull request number or URL, such as `pr-cleanup 123`, when the branch has
+more than one historical merged pull request. Before changing branches or
+deleting anything, `pr-cleanup` verifies that the selected upstream pull
+request is `MERGED`, its head matches both the local fork repository and current
+branch, its base is the upstream default branch, and its merge commit is present
+on that branch. It also refuses tracked worktree or index changes.
+
+After those checks, the command fast-forwards the local default branch from
+upstream, pushes that branch normally to the fork, deletes the remote feature
+branch if it still exists, and deletes the local feature branch. It first tries
+Git's safe branch deletion; squash-merged branches require a forced local
+deletion because their original commits are not ancestors of the squash
+commit. That fallback occurs only after the exact merged pull request and
+upstream merge commit have been verified.
+
 ## Uninstall
 
 ```bash
@@ -167,6 +194,7 @@ bash test/install_help_test.sh
 bash test/fork_sync_test.sh
 bash test/pr_create_test.sh
 bash test/rewrite_comment_test.sh
+bash test/cleanup_test.sh
 bash test/jenkinsfile_test.sh
 ```
 
