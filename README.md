@@ -19,9 +19,12 @@ merge and the [human verification checklist](docs/human-verification.md) as a
 reusable review record. A protected automatic merge is safe when a trusted,
 least-privilege check proves that the pull request was authored by one member
 of a configured three-agent cohort and the other two members approved the exact
-current head, while the ruleset separately requires all CI for that revision.
-GitHub, not an agent or repository helper, then performs the merge. See the
-[protected automatic merge contract](docs/automatic-merge.md).
+current head, while an organization ruleset synchronously requires two
+approvals from that cohort's dedicated team and all CI for that revision. A
+user-owned repository cannot enforce the team-scoped quorum and must retain the
+maintainer path. GitHub, not an agent or repository helper, performs an eligible
+automatic merge. See the [protected automatic merge
+contract](docs/automatic-merge.md).
 
 ## Requirements
 

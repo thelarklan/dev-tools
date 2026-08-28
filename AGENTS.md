@@ -67,6 +67,9 @@ git diff --check
 
 - Respond to review findings with focused changes and leave blocking threads
   for the reviewer to resolve or confirm.
+- When reviewing a cohort peer, inspect and verify the exact current head before
+  approving. Do not rubber-stamp a quorum approval, and follow the reviewer
+  obligations in `docs/automatic-merge.md`.
 - Do not approve or directly merge your own pull request. A maintainer may
   perform the deliberate squash merge through GitHub after review and
   exact-head verification. Alternatively, GitHub may merge automatically under
