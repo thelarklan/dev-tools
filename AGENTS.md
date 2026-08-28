@@ -67,9 +67,13 @@ git diff --check
 
 - Respond to review findings with focused changes and leave blocking threads
   for the reviewer to resolve or confirm.
-- Do not approve or merge your own pull request. A maintainer performs the
-  deliberate squash merge through GitHub after review and exact-head
-  verification. This repository intentionally has no `pr-merge` helper.
+- Do not approve or directly merge your own pull request. A maintainer may
+  perform the deliberate squash merge through GitHub after review and
+  exact-head verification. Alternatively, GitHub may merge automatically under
+  the fail-closed three-agent quorum and trusted-check contract documented in
+  `docs/automatic-merge.md`. Review agents must not publish or imitate that
+  trusted check, use an administrator bypass, or merge with a personal token.
+  This repository intentionally has no `pr-merge` helper.
 - After GitHub reports the pull request merged, run `pr-cleanup [PR]` from its
   feature branch. Let the command verify the exact merged pull request,
   synchronize the default branch, and remove only the verified local and fork
