@@ -209,7 +209,7 @@ run_provider() {
                     timeout --signal=TERM --kill-after=2m "${PR_REVIEW_TIMEOUT:-45m}" \
                         "$executable" --dangerously-skip-permissions \
                         --output-format text --print-timeout "${PR_REVIEW_TIMEOUT:-45m}" \
-                        --model "${PR_REVIEW_ANTIGRAVITY_MODEL:-gemini-3.7-flash-high}" \
+                        --model "${PR_REVIEW_ANTIGRAVITY_MODEL:-gemini-3.1-pro-high}" \
                         --effort "${PR_REVIEW_ANTIGRAVITY_EFFORT:-high}" \
                         --print="$prompt"
                     ;;
@@ -268,6 +268,8 @@ while IFS= read -r item; do
         "This is an autonomous scheduled pull-request review for $item, running as GitHub identity $reviewer." \
         "" \
         "Use the GitHub CLI for GitHub reads and the final review submission. Inspect the complete diff, repository instructions, prior review conversation, and relevant surrounding code. Run proportionate tests when feasible. Re-read the pull request head immediately before submitting so no stale review is posted." \
+        "" \
+        "Before choosing a verdict, perform a separate defect-seeking pass independent of the pull request description and existing CI results. Identify the highest-risk changed behavior, trace its failure and boundary paths, and inspect whether tests could pass while documented behavior still fails. Findings must be concrete and evidence-backed; do not manufacture nits. Treat APPROVE as a conclusion reached only after this pass, not as the default outcome." \
         "" \
         "Submit exactly one new GitHub pull-request review at the current head using APPROVE, COMMENT, or REQUEST_CHANGES as warranted. Do not merely print a review locally. End the review body with this marker on its own line:" \
         "_reviewed from: $provider-wsl-cron_" \

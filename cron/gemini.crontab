@@ -2,4 +2,4 @@ SHELL=/bin/bash
 PATH=/usr/local/bin:/usr/bin:/bin
 PR_REVIEW_PATH=CHANGE_ME
 
-2-57/5 * * * * /usr/bin/flock -n "$HOME/.cache/pr-review/cron.lock" /usr/bin/env PR_REVIEW_PROVIDER=gemini PR_REVIEW_REVIEWER=CHANGE_ME PR_REVIEW_GEMINI_DRIVER=agy PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.7-flash-high PR_REVIEW_ANTIGRAVITY_EFFORT=high "$HOME/.local/bin/pr-review-cron"
+2-57/5 * * * * /usr/bin/flock -n "$HOME/.cache/pr-review/cron.lock" /usr/bin/env PR_REVIEW_PROVIDER=gemini PR_REVIEW_REVIEWER=CHANGE_ME PR_REVIEW_GEMINI_DRIVER=agy PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.1-pro-high PR_REVIEW_ANTIGRAVITY_EFFORT=high "$HOME/.local/bin/pr-review-cron"

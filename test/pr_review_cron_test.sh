@@ -46,7 +46,7 @@ grep -Fq 'PR_REVIEW_CODEX_MODEL=gpt-5.6-sol PR_REVIEW_CODEX_EFFORT=high' \
     "$project_dir/cron/codex.crontab" || fail "Codex crontab does not pin its model"
 grep -Fq 'PR_REVIEW_CLAUDE_MODEL=claude-sonnet-5 PR_REVIEW_CLAUDE_EFFORT=high' \
     "$project_dir/cron/claude.crontab" || fail "Claude crontab does not pin its model"
-grep -Fq 'PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.7-flash-high PR_REVIEW_ANTIGRAVITY_EFFORT=high' \
+grep -Fq 'PR_REVIEW_ANTIGRAVITY_MODEL=gemini-3.1-pro-high PR_REVIEW_ANTIGRAVITY_EFFORT=high' \
     "$project_dir/cron/gemini.crontab" || fail "Antigravity crontab does not pin its model"
 
 cat >"$home_dir/.bashrc.d/dev-tools-git.sh" <<'EOF'
@@ -135,6 +135,14 @@ grep -Fq 'confirmed review 102 for owner/repository#7 at head-sha' \
 assert_arg_pair "$provider_args" --model gpt-5.6-sol "Codex model was not pinned"
 assert_arg_pair "$provider_args" --config 'model_reasoning_effort="high"' \
     "Codex reasoning effort was not pinned"
+grep -Fq 'perform a separate defect-seeking pass' "$provider_args" || \
+    fail "review prompt does not require a defect-seeking pass"
+grep -Fq 'tests could pass while documented behavior still fails' "$provider_args" || \
+    fail "review prompt does not require test-gap analysis"
+grep -Fq 'do not manufacture nits' "$provider_args" || \
+    fail "review prompt does not reject quota-driven findings"
+grep -Fq 'not as the default outcome' "$provider_args" || \
+    fail "review prompt does not set the approval threshold"
 
 cat >"$fake_bin/claude" <<'EOF'
 #!/usr/bin/env bash
@@ -178,7 +186,7 @@ PR_WATCH_ITEM=owner/gemini#9 \
 REVIEW_SUBMITTED="$review_marker" \
 PROVIDER_ARGS="$provider_args" \
     "$project_dir/bin/pr-review-cron"
-assert_arg_pair "$provider_args" --model gemini-3.7-flash-high \
+assert_arg_pair "$provider_args" --model gemini-3.1-pro-high \
     "Antigravity model was not pinned"
 assert_arg_pair "$provider_args" --effort high "Antigravity effort was not pinned"
 

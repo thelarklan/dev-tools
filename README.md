@@ -321,15 +321,19 @@ Node, Python, and repository toolchains remain available under cron; use
 absolute directories because crontab environment assignments do not expand
 `$HOME`. Each example polls every five minutes and uses `flock` to prevent
 overlapping runs. The examples pin Codex to GPT-5.6 Sol with high reasoning,
-Claude to Claude Sonnet 5 with high effort, and Antigravity to Gemini 3.7 Flash
+Claude to Claude Sonnet 5 with high effort, and Antigravity to Gemini 3.1 Pro
 High.
 Passing an example directly to `crontab` replaces that account's entire
 existing crontab, so do that only when replacement is intended. The Gemini
 example selects Antigravity's `agy` command; remove
 `PR_REVIEW_GEMINI_DRIVER=agy` to use Gemini CLI. Before enabling a schedule,
 authenticate `gh` and the selected provider CLI in that WSL account and run
-the command once interactively. These adapters grant the provider permission
-to use tools without prompting, so use a dedicated account and restrict
+the command once interactively. For Antigravity, run `agy models` in that
+account and confirm that `gemini-3.1-pro-high` is listed before installing the
+example. Headless Antigravity exits nonzero for an unavailable model pin rather
+than silently selecting another model; the runner will retry and eventually
+escalate that failure. These adapters grant the provider permission to use
+tools without prompting, so use a dedicated account and restrict
 `PR_REVIEW_OWNER` to repositories whose pull-request contents you trust.
 
 Logs are written to `~/.local/state/pr-review/cron.log`. Useful overrides:
@@ -349,7 +353,7 @@ Logs are written to `~/.local/state/pr-review/cron.log`. Useful overrides:
 | `PR_REVIEW_CODEX_EFFORT` | `high` | Codex reasoning-effort pin. |
 | `PR_REVIEW_CLAUDE_MODEL` | `claude-sonnet-5` | Claude model pin. |
 | `PR_REVIEW_CLAUDE_EFFORT` | `high` | Claude effort pin. |
-| `PR_REVIEW_ANTIGRAVITY_MODEL` | `gemini-3.7-flash-high` | Antigravity model pin. |
+| `PR_REVIEW_ANTIGRAVITY_MODEL` | `gemini-3.1-pro-high` | Antigravity model pin. |
 | `PR_REVIEW_ANTIGRAVITY_EFFORT` | `high` | Antigravity reasoning-effort pin. |
 | `PR_REVIEW_CODEX_BIN` | `codex` on `PATH` | Codex executable override. |
 | `PR_REVIEW_CLAUDE_BIN` | `claude` on `PATH` | Claude executable override. |
