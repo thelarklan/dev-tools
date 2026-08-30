@@ -247,4 +247,15 @@ if grep -Fq 'repo view' "$fake_gh_log"; then
     fail "pr-create used GitHub API calls for local remote metadata"
 fi
 
+mkdir -p "$clone_dir/.github"
+mkdir -p "$clone_dir/nested"
+printf '## Verification\n' >"$clone_dir/.github/pull_request_template.md"
+: >"$fake_gh_log"
+(
+    cd "$clone_dir/nested"
+    # shellcheck disable=SC2119
+    pr-create >/dev/null
+)
+grep -Fq "pr create --repo github.com/upstream/project --base main --head thelarkbot:feature/example --fill --body-file $clone_dir/.github/pull_request_template.md --draft" "$fake_gh_log" || fail "pr-create did not populate the repository pull-request template"
+
 printf 'commit and PR creation tests passed\n'

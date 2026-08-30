@@ -1,11 +1,13 @@
 # Human verification checklist
 
-Use this checklist for a focused dev-tools pull request that follows the
-maintainer verification path. Keep the evidence in the pull-request description
+Use this checklist for a focused dev-tools pull request that needs hands-on
+verification. Keep the evidence in the pull-request description
 or review so it remains attached to the exact head commit that was verified.
 An eligible three-agent pull request may instead use the
 [protected automatic merge contract](automatic-merge.md) after its trusted
 check and ruleset have been deployed and verified.
+The shared requirements and this repository's implementation are recorded in
+the [local review policy](review-policy.md).
 
 ## Contributor record
 
@@ -24,8 +26,9 @@ check and ruleset have been deployed and verified.
 - Repeat the hands-on steps from a disposable checkout or environment.
 - Verify failure paths leave the repository in the documented recoverable state.
 - Submit the review against the exact head commit.
-- Perform the merge deliberately in GitHub only after the evidence is complete;
-  do not imitate or bypass the protected automatic merge gate.
+- For a protected change, submit the human approval at the exact verified head.
+  Do not merge directly, imitate the trusted check, or bypass the automatic
+  merge gate; GitHub merges after the complete gate passes.
 
 ## Post-merge cleanup
 

@@ -3,6 +3,9 @@
 These instructions govern automated changes in this repository. They are
 limited to the Git and pull-request lifecycle; use the repository's existing
 documentation, tests, and code as the authority for implementation behavior.
+The repository adopts the shared review standard through
+`docs/review-policy.md`; that local policy records repository-specific
+verification, protected paths, and exceptions.
 
 ## Start from a safe repository state
 
@@ -40,6 +43,7 @@ The current complete local surface is:
 
 ```bash
 bash scripts/verify.sh
+bash scripts/verify-pr-diff.sh upstream/main HEAD
 git diff --check
 ```
 
@@ -64,13 +68,13 @@ git diff --check
 - When reviewing a cohort peer, inspect and verify the exact current head before
   approving. Do not rubber-stamp a quorum approval, and follow the reviewer
   obligations in `docs/automatic-merge.md`.
-- Do not approve or directly merge your own pull request. A maintainer may
-  perform the deliberate squash merge through GitHub after review and
-  exact-head verification. Alternatively, GitHub may merge automatically under
-  the fail-closed three-agent quorum and trusted-check contract documented in
-  `docs/automatic-merge.md`. Review agents must not publish or imitate that
-  trusted check, use an administrator bypass, or merge with a personal token.
-  This repository intentionally has no `pr-merge` helper.
+- Do not approve or directly merge your own pull request. The hardened trusted
+  App may arm squash auto-merge after the exact-head agent quorum passes;
+  GitHub performs the merge only after every native rule is also satisfied.
+  Routine changes need no human action. Protected changes require human content
+  approval but no separate merge click. Review agents must not publish or
+  imitate the trusted check, use an administrator bypass, or merge with a user
+  token. This repository intentionally has no `pr-merge` helper.
 - After GitHub reports the pull request merged, run `pr-cleanup [PR]` from its
   feature branch. Let the command verify the exact merged pull request,
   synchronize the default branch, and remove only the verified local and fork

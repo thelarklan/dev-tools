@@ -20,6 +20,8 @@ fi
 check_name="${QUORUM_CHECK_NAME:-bot-review-quorum}"
 api_url="${QUORUM_API_URL:-https://api.github.com}"
 curl_bin="${QUORUM_CURL_BIN:-curl}"
+auto_merge_enabled="${QUORUM_AUTO_MERGE:-0}"
+protected_paths_file="${QUORUM_PROTECTED_PATHS_FILE:-}"
 
 quorum_error() {
     printf 'pr-review-quorum: %s\n' "$*" >&2
@@ -90,12 +92,15 @@ collect_pages() {
 
 evaluate_quorum() {
     local pull_file="$1" reviews_file="$2" default_branch="$3" bot_ids_json="$4" owner_id="$5"
+    local classification_known="${6:-true}" protected="${7:-false}"
     jq -cn \
         --slurpfile pull "$pull_file" \
         --slurpfile reviews "$reviews_file" \
         --arg default_branch "$default_branch" \
         --argjson bots "$bot_ids_json" \
-        --argjson owner "$owner_id" '
+        --argjson owner "$owner_id" \
+        --argjson classification_known "$classification_known" \
+        --argjson protected "$protected" '
         def decisive:
           (.state // "" | ascii_upcase) as $state
           | select($state == "APPROVED" or $state == "CHANGES_REQUESTED" or $state == "DISMISSED")
@@ -113,6 +118,9 @@ evaluate_quorum() {
         | ($pr.head.sha // "") as $head
         | ($pr.user.id // 0) as $author
         | ($bots | map(select(. != $author))) as $eligible
+        | (($latest[($owner | tostring)] // {
+            user_id: $owner, login: "unknown", state: "MISSING", commit_id: "", submitted_at: ""
+          }) | . + {exact_head: ($head != "" and .state == "APPROVED" and .commit_id == $head)}) as $owner_review
         | ($eligible | map(
             . as $id
             | ($latest[($id | tostring)] // {
@@ -121,7 +129,9 @@ evaluate_quorum() {
             | . + {exact_head: ($head != "" and .state == "APPROVED" and .commit_id == $head)}
           )) as $observed
         | ($observed | map(select(.exact_head)) | length) as $approval_count
-        | if $head == "" then
+        | if ($classification_known | not) then
+            {conclusion:"failure", title:"Protected-path classification failed", summary:"The trusted gate could not classify the complete pull-request file list."}
+          elif $head == "" then
             {conclusion:"failure", title:"Pull request head is missing", summary:"The quorum gate cannot validate approvals without a non-empty pull-request head SHA."}
           elif ($pr.state // "" | ascii_downcase) != "open" then
             {conclusion:"failure", title:"Pull request is not open", summary:"The quorum gate only passes open pull requests."}
@@ -131,6 +141,12 @@ evaluate_quorum() {
             {conclusion:"failure", title:"Pull request targets an unprotected branch", summary:("Expected base " + $default_branch + ", observed " + ($pr.base.ref // "unknown") + ".")}
           elif $author != $owner and ($bots | index($author)) == null then
             {conclusion:"failure", title:"Author is outside the trusted author set", summary:("Author ID " + ($author | tostring) + " is neither the configured repository owner nor one of the three bot accounts.")}
+          elif $protected and $author == $owner then
+            {conclusion:"failure", title:"Human owner authored a protected change", summary:"The sole human owner cannot approve their own protected pull request; an eligible agent must author it."}
+          elif $protected and ($owner_review.exact_head | not) then
+            {conclusion:"failure", title:"Protected change lacks human approval", summary:("The configured human owner must approve protected head " + $head + ".")}
+          elif ($protected | not) and $author != $owner and $owner_review.exact_head then
+            {conclusion:"failure", title:"Routine bot change has human approval", summary:"The human owner must not occupy a native approval slot on a routine bot-authored pull request in the personal-repository profile."}
           elif $approval_count >= 2 then
             {conclusion:"success", title:"Exact-head bot quorum satisfied", summary:((if $author == $owner then "Two configured bot accounts" else "Both non-author bot accounts" end) + " approved head " + $head + ".")}
           else
@@ -141,9 +157,58 @@ evaluate_quorum() {
             author_id:$author,
             eligible_reviewer_ids:$eligible,
             required_approval_count:2,
-            observed:$observed
+            observed:$observed,
+            protected:$protected,
+            classification_known:$classification_known,
+            owner_review:$owner_review
           }
     '
+}
+
+classify_protected_change() {
+    local repository="$1" files_json="$2" protected_paths_json="$3"
+    jq -n --arg repository "$repository" --argjson files "$files_json" \
+        --argjson config "$protected_paths_json" '
+        ($config[$repository].paths // null) as $patterns
+        | if $patterns == null then error("repository has no protected-path configuration") else
+            $patterns | any(. as $pattern | $files | any(. as $file |
+                if ($pattern | endswith("/")) then ($file | startswith($pattern))
+                else $file == $pattern end))
+          end
+    '
+}
+
+read_protected_classification() {
+    local repository="$1" pull_number="$2" pull_json="$3" protected_paths_json="$4"
+    local files expected_files actual_files
+
+    files=$(collect_pages "/repos/$repository/pulls/$pull_number/files" \
+        '[.[].filename]') || {
+        quorum_error "could not read files for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    expected_files=$(jq -er '.changed_files' <<<"$pull_json") || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    actual_files=$(jq -er 'length' <<<"$files") || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    [[ "$actual_files" == "$expected_files" ]] || {
+        quorum_error "incomplete file list for $repository#$pull_number; publishing failure"
+        return 1
+    }
+    classify_protected_change "$repository" "$files" "$protected_paths_json" || {
+        quorum_error "could not classify protected paths for $repository#$pull_number; publishing failure"
+        return 1
+    }
+}
+
+repository_auto_merge_enabled() {
+    local repository="$1" protected_paths_json="$2"
+    jq -r --arg repository "$repository" '.[$repository].auto_merge' \
+        <<<"$protected_paths_json"
 }
 
 publish_check() {
@@ -189,9 +254,51 @@ publish_check() {
         --argjson eligible "$(jq -c '.eligible_reviewer_ids' <<<"$evaluation")" \
         --argjson required_count "$(jq -r '.required_approval_count' <<<"$evaluation")" \
         --argjson observed "$(jq -c '.observed' <<<"$evaluation")" \
+        --argjson protected "$(jq -r '.protected' <<<"$evaluation")" \
+        --argjson owner_review "$(jq -c '.owner_review' <<<"$evaluation")" \
         --arg conclusion "$conclusion" \
         --argjson check "$check_id" \
-        '{repository:$repository,pull:$pull,head:$head,author_id:$author,eligible_reviewer_ids:$eligible,required_approval_count:$required_count,observed:$observed,conclusion:$conclusion,check_run_id:$check}'
+        '{repository:$repository,pull:$pull,head:$head,author_id:$author,eligible_reviewer_ids:$eligible,required_approval_count:$required_count,observed:$observed,protected:$protected,owner_review:$owner_review,conclusion:$conclusion,check_run_id:$check}'
+}
+
+reconcile_auto_merge() {
+    local pull_json="$1" evaluation="$2"
+    local node_id conclusion current body response action
+    node_id=$(jq -er '.node_id' <<<"$pull_json") || return 1
+    conclusion=$(jq -er '.conclusion' <<<"$evaluation") || return 1
+    current=$(jq -r 'if .auto_merge == null then "disabled" else "enabled" end' \
+        <<<"$pull_json") || return 1
+
+    if [[ "$conclusion" == success && "$current" == disabled ]]; then
+        body=$(jq -cn --arg pull "$node_id" '{
+            query:"mutation($pull:ID!){enablePullRequestAutoMerge(input:{pullRequestId:$pull,mergeMethod:SQUASH}){pullRequest{autoMergeRequest{enabledAt mergeMethod}}}}",
+            variables:{pull:$pull}
+        }') || return 1
+        action=armed
+    elif [[ "$conclusion" != success && "$current" == enabled ]]; then
+        body=$(jq -cn --arg pull "$node_id" '{
+            query:"mutation($pull:ID!){disablePullRequestAutoMerge(input:{pullRequestId:$pull}){pullRequest{autoMergeRequest{enabledAt}}}}",
+            variables:{pull:$pull}
+        }') || return 1
+        action=disarmed
+    else
+        printf '%s\n' unchanged
+        return 0
+    fi
+
+    response=$(github_request POST /graphql "$installation_token" "$body") || return 1
+    [[ "$(jq -r '(.errors // []) | length' <<<"$response")" == 0 ]] || {
+        quorum_error "GitHub rejected the auto-merge $action mutation"
+        return 1
+    }
+    if [[ "$action" == armed ]]; then
+        jq -e '.data.enablePullRequestAutoMerge.pullRequest.autoMergeRequest != null' \
+            >/dev/null <<<"$response" || return 1
+    else
+        jq -e '.data.disablePullRequestAutoMerge.pullRequest.autoMergeRequest == null' \
+            >/dev/null <<<"$response" || return 1
+    fi
+    printf '%s\n' "$action"
 }
 
 validate_configuration() {
@@ -209,6 +316,33 @@ validate_configuration() {
     }
     [[ "${QUORUM_OWNER_ID:-}" =~ ^[0-9]+$ ]] || {
         quorum_error 'QUORUM_OWNER_ID must be the numeric repository-owner ID'
+        return 1
+    }
+    [[ "$auto_merge_enabled" == 0 || "$auto_merge_enabled" == 1 ]] || {
+        quorum_error 'QUORUM_AUTO_MERGE must be 0 or 1'
+        return 1
+    }
+    [[ -f "$protected_paths_file" ]] || {
+        quorum_error 'QUORUM_PROTECTED_PATHS_FILE must name the private protected-path JSON file'
+        return 1
+    }
+    [[ -z "$(find "$protected_paths_file" -maxdepth 0 -perm /077 -print -quit)" ]] || {
+        quorum_error 'protected-path configuration permissions are too broad; run chmod 600 on it'
+        return 1
+    }
+    jq -e '
+        type == "object" and length > 0 and
+        all(to_entries[];
+            (.key | type == "string" and length > 0) and
+            (.value | type == "object") and
+            (.value.auto_merge | type == "boolean") and
+            (.value.paths | type == "array" and length > 0) and
+            all(.value.paths[]; type == "string" and length > 0 and
+                (startswith("/") | not) and
+                (contains("*") | not) and
+                (contains("..") | not)))
+    ' "$protected_paths_file" >/dev/null || {
+        quorum_error 'protected-path configuration must map repositories to safe exact paths or directory prefixes'
         return 1
     }
     [[ -f "${QUORUM_PRIVATE_KEY_FILE:-}" ]] || {
@@ -237,10 +371,11 @@ validate_configuration() {
 }
 
 main() {
-    local bot_ids_json jwt token_response installation_token repositories failures=0
-    local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_head pull_url
+    local bot_ids_json protected_paths_json jwt token_response installation_token repositories failures=0
+    local repository full_name default_branch owner_id pulls pull_number pull_file reviews_file reviews evaluation fresh_pull fresh_reviews fresh_head pull_url check_output auto_merge_action protected classification_known repository_auto_merge
 
     bot_ids_json=$(validate_configuration) || return 1
+    protected_paths_json=$(jq -ce '.' "$protected_paths_file") || return 1
     jwt=$(make_app_jwt) || {
         quorum_error 'could not sign a GitHub App JWT'
         return 1
@@ -274,6 +409,12 @@ main() {
             failures=$((failures + 1))
             continue
         }
+        repository_auto_merge=$(repository_auto_merge_enabled "$full_name" \
+            "$protected_paths_json") || {
+            quorum_error "could not read auto-merge policy for $full_name"
+            failures=$((failures + 1))
+            continue
+        }
         pulls=$(collect_pages "/repos/$full_name/pulls?state=open" '.') || {
             quorum_error "could not list open pull requests for $full_name"
             failures=$((failures + 1))
@@ -289,6 +430,14 @@ main() {
                 continue
             fi
             pull_url=$(jq -r '.html_url // ""' "$pull_file")
+            classification_known=true
+            protected=false
+            if ! protected=$(read_protected_classification "$full_name" "$pull_number" \
+                "$(<"$pull_file")" "$protected_paths_json"); then
+                classification_known=false
+                protected=false
+                failures=$((failures + 1))
+            fi
             if ! reviews=$(collect_pages "/repos/$full_name/pulls/$pull_number/reviews" '.'); then
                 reviews='[]'
                 quorum_error "could not read reviews for $full_name#$pull_number; publishing failure"
@@ -296,7 +445,8 @@ main() {
             fi
             printf '%s\n' "$reviews" >"$reviews_file"
             evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" \
-                "$default_branch" "$bot_ids_json" "$QUORUM_OWNER_ID") || {
+                "$default_branch" "$bot_ids_json" "$QUORUM_OWNER_ID" \
+                "$classification_known" "$protected") || {
                 quorum_error "could not evaluate $full_name#$pull_number"
                 failures=$((failures + 1))
                 continue
@@ -307,20 +457,65 @@ main() {
                 failures=$((failures + 1))
                 continue
             }
-            fresh_head=$(jq -er '.head.sha' <<<"$fresh_pull") || {
+            jq -er '.head.sha' <<<"$fresh_pull" >/dev/null || {
                 failures=$((failures + 1))
                 continue
             }
-            if [[ "$fresh_head" != "$(jq -r '.head_sha' <<<"$evaluation")" || \
-                "$(jq -r '.state' <<<"$fresh_pull")" != open ]]; then
-                quorum_error "$full_name#$pull_number changed during evaluation; refusing to publish success"
+            classification_known=true
+            protected=false
+            if ! protected=$(read_protected_classification "$full_name" "$pull_number" \
+                "$fresh_pull" "$protected_paths_json"); then
+                classification_known=false
+                protected=false
+                failures=$((failures + 1))
+            fi
+            if ! fresh_reviews=$(collect_pages "/repos/$full_name/pulls/$pull_number/reviews" '.'); then
+                fresh_reviews='[]'
+                quorum_error "could not re-read reviews for $full_name#$pull_number; publishing failure"
+                failures=$((failures + 1))
+            fi
+            printf '%s\n' "$fresh_pull" >"$pull_file"
+            printf '%s\n' "$fresh_reviews" >"$reviews_file"
+            evaluation=$(evaluate_quorum "$pull_file" "$reviews_file" \
+                "$default_branch" "$bot_ids_json" "$QUORUM_OWNER_ID" \
+                "$classification_known" "$protected") || {
+                quorum_error "could not re-evaluate $full_name#$pull_number"
                 failures=$((failures + 1))
                 continue
-            fi
-            publish_check "$full_name" "$pull_number" "$pull_url" "$evaluation" || {
+            }
+            check_output=$(publish_check "$full_name" "$pull_number" "$pull_url" "$evaluation") || {
                 quorum_error "could not publish the check for $full_name#$pull_number"
                 failures=$((failures + 1))
+                continue
             }
+            auto_merge_action=not-configured
+            if [[ "$auto_merge_enabled" == 1 && "$repository_auto_merge" == true ]]; then
+                fresh_pull=$(github_request GET "/repos/$full_name/pulls/$pull_number" \
+                    "$installation_token") || {
+                    quorum_error "could not re-read $full_name#$pull_number before auto-merge reconciliation"
+                    failures=$((failures + 1))
+                    continue
+                }
+                fresh_head=$(jq -er '.head.sha' <<<"$fresh_pull") || {
+                    failures=$((failures + 1))
+                    continue
+                }
+                if [[ "$fresh_head" != "$(jq -r '.head_sha' <<<"$evaluation")" || \
+                    "$(jq -r '.state' <<<"$fresh_pull")" != open ]]; then
+                    quorum_error "$full_name#$pull_number changed before auto-merge reconciliation"
+                    failures=$((failures + 1))
+                    continue
+                fi
+                auto_merge_action=$(reconcile_auto_merge "$fresh_pull" "$evaluation") || {
+                    quorum_error "could not reconcile auto-merge for $full_name#$pull_number"
+                    failures=$((failures + 1))
+                    continue
+                }
+            elif [[ "$auto_merge_enabled" == 1 ]]; then
+                auto_merge_action=disabled-for-repository
+            fi
+            jq -c --arg auto_merge_action "$auto_merge_action" \
+                '. + {auto_merge_action:$auto_merge_action}' <<<"$check_output"
         done < <(jq -r '.[].number' <<<"$pulls")
     done < <(jq -c '.[]' <<<"$repositories")
 

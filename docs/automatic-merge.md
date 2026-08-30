@@ -1,93 +1,115 @@
-# Protected automatic merge
+# Hardened personal-repository automatic merge
 
-Automatic merge is safe only when GitHub, rather than a repository helper or
-review agent, performs the merge after a fail-closed identity and revision
-gate. Enabling repository auto-merge by itself is not sufficient.
+GitHub performs an automatic squash merge only after the native repository
+rules and the trusted agent-identity gate both pass. The App may arm or disarm
+auto-merge; it never calls a direct-merge endpoint and never checks out or
+executes pull-request code. This is the `dev-tools` implementation of the
+`peer-agents` profile in the versioned `thelarklan/thelarklan` standard.
 
 ## Three-agent quorum
 
-Configure one merge cohort containing exactly three GitHub accounts. Store and
-compare their stable GitHub account IDs; logins are display labels and may be
-renamed.
+Configure exactly three agent accounts and store their stable numeric GitHub
+IDs in private deployment configuration. A bot-authored pull request requires
+exact-current-head `APPROVED` reviews from both other agents. An owner-authored
+pull request requires any two configured agents. The author, repository owner,
+and accounts outside the cohort never substitute for a required agent review.
 
-The protected automatic path requires an organization-owned repository. Put
-exactly those three accounts in a dedicated organization team, give that team
-write access to the repository, and configure the ruleset to require two
-approvals from that team for every repository path. GitHub enforces that team
-quorum synchronously: dismissing either required approval immediately blocks
-merge, and an approval from outside the team cannot substitute for it. A
-user-owned repository cannot configure team-scoped required reviewers and must
-continue using deliberate maintainer merge until this prerequisite is met.
+An eligible pull request is open, non-draft, targets the protected upstream
+default branch, and is authored by the owner or one cohort agent. A missing or
+dismissed cohort review, cohort `CHANGES_REQUESTED`, an old review commit, a new
+head, outside author, API error, incomplete pagination, or ambiguous identity
+fails the trusted check. GitHub separately requires repository CI, conversation
+resolution, current base, native reviews, and human code-owner approval for
+protected paths. The App classifies the complete changed-file list against a
+private per-repository exact-path and directory-prefix map. A protected change
+also requires the configured human owner's exact-head approval; a routine bot
+change publishes failure and remains disarmed if any owner approval exists,
+until that approval is dismissed. An owner `CHANGES_REQUESTED` review on a
+routine bot change is outside the trusted cohort calculation; GitHub's native
+review rule blocks the merge until that request is resolved.
 
-For a pull request to be eligible:
+## Trusted App boundary
 
-- it is open, non-draft, and targets the protected upstream default branch;
-- its author is one member of the configured cohort;
-- each of the other two cohort members has a latest review state of `APPROVED`;
-- both approvals were submitted against the pull request's current head SHA;
-- the author does not count toward the review quorum;
-- all required CI checks, including Jenkins, pass for that same head SHA; and
-- every other repository rule, including conversation resolution and the
-  up-to-date-branch policy, is satisfied.
+The private `thelarklan-bot-review-quorum` App receives only:
 
-A missing review, dismissed approval, `CHANGES_REQUESTED` review, new head
-commit, outside author, API error, pagination ceiling, or ambiguous identity
-keeps the gate from passing. Two reviews from one account never substitute for
-approvals from both required accounts.
+- metadata read;
+- pull requests read and write, solely to inspect reviews and enable or disable
+  auto-merge; and
+- checks read and write, solely to publish or revoke `bot-review-quorum`.
 
-For example, if agent A authors the pull request, agents B and C must approve
-its exact current head. The rule rotates with the author.
+Do not grant contents write, administration, workflows, secrets, deployments,
+ruleset bypass, or any permission that allows a direct merge or push. Keep
+account IDs, the protected-path map, the App private key, and installation
+configuration outside the repository. Pull-request-controlled files never
+define trusted identities or policy.
 
-## Trusted check
+For every open pull request, the evaluator reads the complete changed-file list
+and every review page, then evaluates the latest decisive state for each stable
+account ID. Immediately before publishing, it re-reads the pull request, the
+complete changed-file list, and the complete review set, and reclassifies the
+fresh files. It publishes the result on that exact head. Before auto-merge
+reconciliation it re-reads the pull request again and refuses the mutation if
+the head or state changed.
 
-Run the quorum evaluator as a dedicated GitHub App. Grant it only the metadata
-and pull-request read access needed to inspect the pull request and reviews,
-plus checks write access to publish a `bot-review-quorum` check run. Do not give
-the app contents write, pull-request write, administration, or merge authority.
-The evaluator must not check out or execute code from the pull request.
+With global `QUORUM_AUTO_MERGE=1` and the repository's private `auto_merge`
+switch set to `true`, a successful exact-head quorum arms GitHub squash
+auto-merge. A failed quorum disarms an existing request. Repositories set to
+`false` continue to receive checks without auto-merge mutations, permitting a
+staged rollout. GraphQL errors or an unexpected response fail the poll loudly.
+A new commit receives no success on its new head and requires fresh reviews.
 
-Publish the check against the inspected head SHA. Re-read the pull request head
-immediately before publishing success and refuse success if it changed during
-evaluation. A later push naturally leaves the new head without a successful
-quorum check and requires both non-author agents to review again.
+## Native repository rules
 
-Re-evaluate when a review is submitted, edited, or dismissed and replace a
-stale success with a non-successful result when the quorum no longer exists.
-Webhook delivery is not the synchronous safety boundary: the native required
-reviewer-team rule keeps the pull request unmergeable during that interval.
+Configure an active default-branch ruleset with no bypass actors that:
 
-Configure an active GitHub ruleset for the default branch that:
+- requires pull requests and two approvals;
+- dismisses stale approvals and requires approval of the latest reviewable
+  push;
+- requires code-owner review for the human-owned protected paths;
+- requires resolved conversations and a branch current with its base;
+- requires `bot-review-quorum` from the expected App plus Jenkins and every
+  other mandatory repository CI context;
+- permits only squash merge; and
+- blocks force pushes and branch deletion.
 
-- requires changes to arrive through a pull request;
-- requires two approvals from the dedicated three-agent team for all paths;
-- requires `bot-review-quorum` from the dedicated GitHub App;
-- requires the Jenkins check and all other repository CI checks;
-- dismisses stale approvals and requires approval of the latest reviewable push;
-- requires review conversations to be resolved;
-- requires the branch to be current with the protected base before merging;
-- allows only squash merge; and
-- has no bypass actors.
+Enable repository auto-merge only after the App permission update and ruleset
+are verified. The App arms individual pull requests; GitHub remains the only
+component that merges. Agents and helpers never use a user token, administrator
+bypass, or a direct merge command.
 
-Enable GitHub auto-merge only after that ruleset is active and verified. The
-quorum evaluator supplies evidence; it never merges. GitHub performs the merge
-only after every required check and rule is satisfied. Repository helpers and
-agents must not use administrator bypasses or recreate this decision with a
-high-privilege personal token.
+## Personal-account limitation
+
+A personal repository cannot synchronously restrict the native approval slots
+to the configured agent cohort. The trusted check supplies that identity rule,
+but polling once per minute is not an atomic revocation mechanism. Native stale
+review, latest-push, two-approval, code-owner, CI, and current-base rules remain
+the safety boundary while reconciliation catches up.
+
+Therefore `@thelarklan` does not approve routine bot-authored pull requests, and
+no account outside the owner and three-agent cohort receives write access
+without a protected policy change. Protected PRs legitimately add the human
+approval; the App rechecks the two-agent quorum immediately before arming
+auto-merge and disarms it when quorum is later lost. This bounded race is
+recorded as a local limitation rather than described as perfectly synchronous.
 
 ## Deployment and audit
 
-Keep the three account IDs and expected GitHub App identity in trusted
-deployment configuration, not in pull-request-controlled executable input.
-Log the repository, pull request number, head SHA, author ID, required reviewer
-IDs, observed review IDs and states, and resulting check-run ID for each
-evaluation without logging credentials.
+Start with `QUORUM_AUTO_MERGE=0`. Verify the expected App ID, installed
+repositories, account IDs, complete pagination, exact-head success and failure
+checks, and the live ruleset. Accept the App pull-request write permission,
+enable repository auto-merge, then set `QUORUM_AUTO_MERGE=1` and run one
+foreground reconciliation before scheduling the one-minute locked poll. Under
+exactly metadata read, pull-request read/write, and checks read/write, confirm
+that `enablePullRequestAutoMerge` succeeds and GitHub attributes and performs
+the resulting squash merge; also confirm the App has neither contents-write nor
+direct-merge capability.
 
-Test the gate before relying on it. At minimum, verify that it refuses an
-outside author, an author approval, one missing reviewer, an approval on an old
-head, a dismissed approval, an outside approval offered as a substitute, a
-later change request, failing or pending CI, a changed head during evaluation,
-and API or pagination failure. Also verify the successful rotation for each of
-the three possible authors.
+Audit output records repository, PR number, head SHA, author ID, required and
+observed reviewer IDs and states, check-run ID, and auto-merge action without
+credentials. Tests cover each author rotation, outside and self approvals,
+stale or dismissed reviews, later change requests, drafts, wrong bases, missing
+heads, auto-merge arm and disarm mutations, and API or response failure.
 
-Until the trusted check and active ruleset are deployed and verified, use the
-[human verification checklist](human-verification.md) and merge deliberately.
+Until the App permission, every required CI context, and both routine and
+protected acceptance scenarios are verified, leave auto-merge unarmed and use
+the [human verification checklist](human-verification.md).

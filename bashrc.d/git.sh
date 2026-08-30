@@ -494,7 +494,7 @@ dev-tools commands:
       Rebase onto an upstream base, pause, then force-push with lease.
 
   pr-create [BASE]
-      Push and open a draft pull request from the fork to upstream.
+      Push and open a draft pull request, using its template when present.
 
   pr-comment MESSAGE
       Comment on the current fork branch's single open upstream pull request.
@@ -662,13 +662,20 @@ pr-create() {
     _dev_git_require_gh || return 1
     _dev_git_require_feature_branch || return 1
 
-    local base branch repository owner
+    local base branch repository owner project_dir template
     base="${1:-$(_dev_git_default_branch)}" || return 1
     branch=$(_dev_git_current_branch) || return 1
     repository=$(_dev_git_upstream_repo) || return 1
     owner=$(_dev_git_origin_owner) || return 1
     git push --set-upstream origin HEAD || return 1
-    gh pr create --repo "$repository" --base "$base" --head "$owner:$branch" --fill --draft
+    project_dir=$(git rev-parse --show-toplevel) || return 1
+    template=$project_dir/.github/pull_request_template.md
+    if [[ -f $template ]]; then
+        gh pr create --repo "$repository" --base "$base" --head "$owner:$branch" \
+            --fill --body-file "$template" --draft
+    else
+        gh pr create --repo "$repository" --base "$base" --head "$owner:$branch" --fill --draft
+    fi
 }
 
 pr-comment() {
